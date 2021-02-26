@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="IRIS" version="26" zv="IRIS for UNIX (Red Hat Enterprise Linux for x86-64) 2020.1 (Build 217_1)" ts="2021-02-26 12:29:24">
+<Class name="OCIELib.Utils.Purge">
+<Description>
+Cleans up all Ensemble artifacts, metadata tables, and recordmap tables.
+Used to initialize a namespace prior to running benchmark tests.
+</Description>
+<Language>objectscript</Language>
+<Super>%RegisteredObject</Super>
+<TimeChanged>65780,54292.166982</TimeChanged>
+<TimeCreated>65780,54292.166982</TimeCreated>
+
+<Parameter name="PersistentClassPkgList">
+<Expression>$lb("ACC.Data.Claim","Data.Metadata","ACC.Batch","ACC.RecordMap","PDA.RecordMap","SDP.RecordMap","OCIE.Request","OCIE.RecordMaps","OCIELib.Report")</Expression>
+</Parameter>
+
+<Parameter name="NoPurgeList">
+<Expression>$lb("SDP.RecordMap.UHNProviderRecord")</Expression>
+</Parameter>
+
+<Method name="PurgeAll">
+<Description><![CDATA[
+
+<!--
+Change Log:
+DATE        |   DEVELOPER      |  DE/US          |    DESCRIPTION
+11/25/2020  | Ray Lawrence	   | US3091411		 |  Performance benchmarking utilities - class creation
+12/29/2020	| Ray Lawrence	   | US3162307		 |  Exclude provider table from purge
+12/30/2020	| Ray Lawrence	   | US3162307		 |  Purge all Ensemble runtime data via Ens.Director.killProductionGlobals
+02/04/2021	| Ray Lawrence	   | US3252935		 |  Added ACC.Data.Claim pkg to purge list - for CCD integration
+]]></Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pVerbose:%Boolean=0</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	set tSC = $$$OK
+	#dim result As %SQL.StatementResult
+	
+	try {
+		// purge all Ensemble data
+		write !,"Purging all Ensemble dynamic data..."
+		$$$ThrowOnError(##class(Ens.Purge).PurgeAll(.delCount,0,0,1))
+		write !,"Purging Ensemble runtime and application data..."
+		$$$ThrowOnError(##class(Ens.Director).killProductionGlobals(1))
+		write !,"Purging stale application data..."
+		kill ^Ens.AppData
+		write !,"Deleting ACC record map global..."
+		kill ^ACC.Data.BatchDataD
+		write !,"Truncating Ens.BusinessProcess"
+		&sql(TRUNCATE TABLE %NOCHECK %NOLOCK Ens.BusinessProcess)
+		set packages = ..#PersistentClassPkgList
+		for i = 1 : 1 : $listlength(packages) {
+			kill list
+			set pkg = $list(packages,i)
+			write:pVerbose !,"Package: "_pkg
+			$$$ThrowOnError($System.OBJ.GetPackageList(.list,pkg,"r"))
+			set className = ""
+			do {
+				set className = $order(list(className))
+				quit:className=""
+				set obj = $$$NULLOREF
+				try {
+					set obj = $classmethod(className,"%New")
+				}
+				catch {
+				}
+				if '$isobject(obj)||('obj.%Extends("%Persistent")) {
+					write:pVerbose !,"Skipping class "_className
+					continue
+				}
+				if $listfind(..#NoPurgeList,className) {continue} // don't purge selected classes from no purge list
+				kill obj
+				set classDef = ##class(%Dictionary.ClassDefinition).%OpenId(className)
+				set tableName = classDef.SqlTableName
+				set:tableName="" tableName=..GetTableName(className)
+				kill obj
+				set sql = "TRUNCATE TABLE %NOCHECK %NOLOCK "_tableName
+				write !,"Truncating table: "_tableName
+				set result = ##class(%SQL.Statement).%ExecDirect(,sql)
+				if (result.%SQLCODE'=0) && (result.%SQLCODE'=100) {
+					write !,"ERROR: Unable to truncate table '"_tableName_"': SQLCODE="_result.%SQLCODE_" %msg="_result.%Message
+				}
+			} while className'=""
+		}
+		write !,"Purge complete!"
+	}
+	catch exception {
+		set tSC = exception.AsStatus()
+		do $system.Status.DisplayError(tSC)
+	}
+	quit tSC
+]]></Implementation>
+</Method>
+
+<Method name="GetTableName">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pClassname:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	set prefix = $piece(pClassname,".",1,*-1)
+	set class = $piece(pClassname,".",*)
+	quit $replace(prefix,".","_")_"."_class
+]]></Implementation>
+</Method>
+</Class>
+</Export>
